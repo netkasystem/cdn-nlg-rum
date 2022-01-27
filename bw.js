@@ -187,6 +187,8 @@
 		cookie_exp: 7 * 86400,
 		cookie: "BA",
 
+		
+
 		// state
 		results: [],
 		latencies: [],
@@ -230,6 +232,7 @@
 		},
 
 		calc_latency: function() {
+	
 			var i, n,
 			    sum = 0, sumsq = 0,
 			    amean, median,
@@ -278,7 +281,6 @@
 			    amean, std_dev, std_err, median,
 			    amean_corrected, std_dev_corrected, std_err_corrected, median_corrected,
 			    nimgs, bw, bw_c, debug_info = [];
-
 			for (i = 0; i < this.nruns; i++) {
 				if (!this.results[i] || !this.results[i].r) {
 					continue;
@@ -316,7 +318,7 @@
 				}
 			}
 
-			BOOMR.debug("got " + n + " readings", "bw");
+			console.log("bandwidths: " + bandwidths, "bw");
 
 			BOOMR.debug("bandwidths: " + bandwidths, "bw");
 			BOOMR.debug("corrected: " + bandwidths_corrected, "bw");
@@ -402,12 +404,15 @@
 		},
 
 		load_img: function(i, run, callback) {
-			var url = this.base_url + images[i].name +
-			    "?t=" + BOOMR.utils.generateId(10),
+			// var url = this.base_url + images[i].name +
+			//     "?t=" + BOOMR.utils.generateId(10),
+			//     timer = 0, tstart = 0,
+			//     img = new Image(),
+			//     that = this;
+				var url = this.base_url + images[i].name,
 			    timer = 0, tstart = 0,
 			    img = new Image(),
 			    that = this;
-
 			function handler(value) {
 				return function() {
 					if (callback) {
@@ -544,14 +549,19 @@
 		},
 
 		iterate: function() {
+			//console.log("1",images.start);
 			if (!this.aborted) {
+				//console.log("2");
 				if (!this.runs_left) {
+					//console.log("2.2");
 					this.finish();
 				}
 				else if (this.latency_runs) {
+					//console.log("3 latency_runs :"+this.latency_runs);
 					this.load_img("l", this.latency_runs--, this.lat_loaded);
 				}
 				else {
+					//console.log("4");
 					this.results.push({r: []});
 					this.load_img(images.start, this.runs_left--, this.img_loaded);
 				}
@@ -789,6 +799,8 @@
 			}
 		}
 	};
+
+	
 
 }());
 // End of BW plugin

@@ -1,161 +1,173 @@
-var framer = require('./framer');
-var parser = require('./parser');
-var dgram = require('dgram');
-
-function Client(options) {
-  var self = this;
-
-  options = options || {};
-
-  this._seq = (Math.random() * 0x10000) | 0;
-  this._reqs = {};
-  this.timeout = 30000;
-  this.send = options.send;
-
-  if (this.send) return;
-
-  this.socket = dgram.createSocket('udp4');
-  var dnsIP = options.dnsServer || Client.DEFAULT_DNS_SERVER;
-  this.send = function(data) {
-    var buf = new Buffer(data);
-    self.socket.send(buf, 0, buf.length, 53, dnsIP);
-  };
-
-  this.socket.on('message', function(b) {
-    self.feed(b);
-  });
-}
-
-exports.Client = Client;
-Client.DEFAULT_DNS_SERVER = '8.8.8.8';
-
-Client.prototype.seq = function seq() {
-  var seq = this._seq++;
-
-  // Wrap-up
-  if (this._seq > 0xffff)
-    this._seq = 0;
-
-  return seq;
-};
-
 /**
- * Meant to be used instead of Node.JS dns.resolve method
+ * Plugin to measure DNS latency.
+ *
+ * This code is based on Carlos Bueno's guide to DNS on the
+ * [Facebook Note](https://www.facebook.com/note.php?note_id=10150212498738920)
+ *
+ * For information on how to include this plugin, see the {@tutorial building} tutorial.
+ *
+ * ## Setup
+ *
+ * Measuring DNS requires some server-side set up, as
+ * [documented in detail](https://www.facebook.com/note.php?note_id=10150212498738920) by
+ * Facebook engineer Carlos Bueno, so go read his post for everything you'll need to set this up.
+ *
+ * In brief, the points he covers are:
+ *
+ * 1. Set up a wildcard hostname, perferably one that does not share cookies with
+ *   your main site. Give it a low TTL, say, 60 seconds, so you don't pollute downstream caches.
+ * 2. Set up a webserver for the wildcard hostname that serves the images named `A.gif`
+ *   and `B.gif` (from the `images/` subdirectory) as fast as possible.  Make sure
+ *   that KeepAlive, Nagle, and any caching headers are turned off.
+ * 3. Include the DNS plugin (see {@tutorial building})
+ * 4. Tell the DNS plugin where to get its images from
+ *   via {@link BOOMR.plugins.DNS.init DNS.base_url}
+ *
+ * Steps 1 and 2 are complicated, and if you don't have full control over your
+ * DNS server, then it may be impossible for you to use this plugin.
+ *
+ * ## Beacon Parameters
+ *
+ * This plugin adds the following parameters to the beacon:
+ *
+ * * `dns.t`: The worst-case DNS latency from the user's browser to your DNS server.
+ *
+ * @class BOOMR.plugins.DNS
  */
-Client.prototype.resolve = function(host, rrtype, callback) {
-  if (typeof rrtype === 'function') {
-    callback = rrtype;
-    rrtype = undefined;
-  }
+(function() {
+	BOOMR = window.BOOMR || {};
+	BOOMR.plugins = BOOMR.plugins || {};
 
-  return this.query(rrtype || 'A', host, callback);
-}
+	if (BOOMR.plugins.DNS) {
+		return;
+	}
 
-Client.prototype.resolve4 = function(host, callback) {
-  return this.resolve(host, 'A', callback);
-}
+	var impl = {
+		complete: false,
+		base_url: "",
+		t_start: null,
+		t_dns: null,
+		t_http: null,
+		img: null,
 
-Client.prototype.resolve6 = function(host, callback) {
-  return this.resolve(host, 'AAAA', callback);
-}
+		gen_url: "",
 
-Client.prototype.query = function query(type, host, cb) {
-  if (this._destroyed) throw new Error('Client has been destroyed');
+		start: function() {
+			console.log("DNS:",impl.gen_url,"--");
+			if (impl.gen_url) {	// already running
+				return;
+			}
 
-  var seq = this.seq();
-  var header = framer.header({
-    id: seq,
-    opcode: 'QUERY',
-    rcode: 'OK',
-    qdcount: 1,
-    rd: true,
-    ra: true
-  });
+			var random = Math.floor(Math.random() * (5 + 1) + 0);
+			//,BOOMR.utils.generateId(10)
 
-  if (host[host.length - 1] !== '.')
-    host += '.';
-  var qd = framer.question(host.split(/\./g), type, 'IN');
+			
+			impl.gen_url = impl.base_url.replace(/\*/, random);
+			console.log("DNS gen_url:",impl.gen_url);
 
-  this._addReq(seq, function(err, ans) {
-    if (err)
-      return cb(err);
 
-    ans = ans.an.filter(function(an) {
-      return an.type === type;
-    }).map(function(an) {
-      return an.rdata;
-    });
-    cb(null, ans);
-  });
+			impl.img = new Image();
+			impl.img.onload = impl.A_loaded;
 
-  this.send(header.concat(qd));
-};
+			impl.t_start = new Date().getTime();
+			//impl.img.src = impl.gen_url + "image-l.gif?t=" + random;
+			impl.img.src = impl.gen_url + "image-l.gif" ;
+		},
 
-Client.prototype._addReq = function _addReq(seq, cb) {
-  if (this._reqs[seq])
-    throw new Error('More than 65535 active requests');
+		A_loaded: function() {
+			var random = Math.floor(Math.random() * (5 + 1) + 0);
+			//BOOMR.utils.generateId(10);
 
-  this._reqs[seq] = {
-    packets: [],
-    timer: setTimeout(function() {
-      cb(new Error('Timed out'), null);
-    }, this.timeout),
-    cb: cb
-  };
-};
+			impl.t_dns = new Date().getTime() - impl.t_start;
 
-Client.prototype.feed = function feed(data) {
-  var packet = parser.feed(data);
-  var seq = packet.id;
+			impl.img = new Image();
+			impl.img.onload = impl.B_loaded;
 
-  // No request - ignore response
-  var req = this._reqs[seq];
-  if (!req)
-    return;
+			impl.t_start = new Date().getTime();
+			impl.img.src = impl.gen_url + "image-l.gif" ;
+			//impl.img.src = impl.gen_url + "image-l.gif?t=" + random;
+		},
 
-  req.packets.push(packet);
+		B_loaded: function() {
+			impl.t_http = new Date().getTime() - impl.t_start;
 
-  // Truncated - collect all data
-  if (packet.tc)
-    return;
+			impl.img = null;
+			impl.done();
+		},
 
-  clearTimeout(req.timer);
-  req.timer = null;
+		done: function() {
+			// DNS time is the time to load the image with uncached DNS
+			// minus the time to load the image with cached DNS
 
-  var ans = {
-    qd: [],
-    an: [],
-    ns: [],
-    ar: []
-  };
-  for (var i = 0; i < req.packets.length; i++) {
-    ans.qd = ans.qd.concat(req.packets[i].qd);
-    ans.an = ans.an.concat(req.packets[i].an);
-    ans.ns = ans.ns.concat(req.packets[i].ns);
-    ans.ar = ans.ar.concat(req.packets[i].ar);
-  }
+			var dns = impl.t_dns - impl.t_http;
 
-  req.cb(null, ans, req.packets);
-};
+			BOOMR.addVar("dns.t", dns);
+			impl.complete = true;
+			impl.gen_url = "";
+			BOOMR.sendBeacon();
+		}
+	};
 
-Client.prototype.destroy = function() {
-  if (this._destroyed) return;
+	BOOMR.plugins.DNS = {
+		/**
+		 * Initializes the plugin.
+		 *
+		 * @param {object} config Configuration
+		 * @param {string} config.DNS.base_url The `base_url` parameter tells the DNS
+		 * plugin where it can find its DNS testing images. This URL must contain
+		 * a wildcard character (`*`) which will be replaced with a random string.
+		 *
+		 * The images will be appended to this string without any other modification.
+		 *
+		 * If you have any pages served over HTTPS, then this URL should be configured
+		 * to work over HTTPS as well as HTTP.
+		 *
+		 * The protocol part of the URL will be automatically changed to fit the
+		 * current document.
+		 *
+		 * @returns {@link BOOMR.plugins.DNS} The DNS plugin for chaining
+		 * @example
+		 * BOOMR.init({
+		 *   DNS: {
+		 *     base_url: "http://*.yoursite.com/images/"
+		 *   }
+		 * });
+		 * @memberof BOOMR.plugins.DNS
+		 */
+		init: function(config) {
+			BOOMR.utils.pluginConfig(impl, config, "DNS", ["base_url"]);
 
-  this._destroyed = true;
-  if (this.socket) this.socket.close();
-};
+			if (config && config.wait) {
+				return this;
+			}
 
-[ 'resolve', 'resolve4', 'resolve6' ].forEach(function(method) {
-  // the node.js dns module's methods that are currently supported
-  exports[method] = function() {
-    var client = new Client();
-    var args = [].slice.call(arguments);
-    var cb = args[args.length - 1];
-    args[args.length - 1] = function(err, result) {
-      client.destroy();
-      cb(err, result);
-    }
+			if (!impl.base_url) {
+				BOOMR.warn("DNS.base_url is not set.  Cannot run DNS test.", "dns");
+				impl.complete = true;  // set to true so that is_complete doesn't
+				                       // block other plugins
+				return this;
+			}
 
-    client[method].apply(client, args);
-  }
-})
+			// do not run test over https
+			if (BOOMR.window.location.protocol === "https:") {
+				impl.complete = true;
+				return this;
+			}
+
+			BOOMR.subscribe("page_ready", impl.start, null, impl);
+
+			return this;
+		},
+
+		/**
+		 * Whether or not this plugin is complete
+		 *
+		 * @returns {boolean} `true` if the plugin is complete
+		 * @memberof BOOMR.plugins.DNS
+		 */
+		is_complete: function() {
+			return impl.complete;
+		}
+	};
+
+}());
